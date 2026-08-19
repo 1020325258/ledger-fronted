@@ -28,6 +28,7 @@ export interface FlowEntry {
   amount?: number;
   fundActionType?: string;
   fundActionDesc?: string;
+  groupType?: string | null;
   transferGroupId?: string | null;
   transactionNo?: string | null;
   finishTime?: number | string | null;
@@ -105,6 +106,20 @@ const OUT_TARGETS: Record<string, PoolTypeKey[]> = {
   REFUND_TO_CUSTOMER: ['CUSTOMER'],
 };
 
+/**
+ * OUTFLOW 的 groupType（后端稳定枚举，LedgerGroupType）→ 候选目标池类型。
+ * 优先于 fundActionType 规则：后端新增动作时 groupType 更稳定，规则表只做兜底。
+ */
+const GROUP_OUT_TARGETS: Record<string, PoolTypeKey[]> = {
+  CUST_PAY: ['ADVANCE', 'SUB_ORDER', 'FUND'],
+  ADVANCE_REFUND: ['CUSTOMER', 'WALLET'],
+  ORDER_REFUND: ['ADVANCE', 'CUSTOMER', 'WALLET'],
+  WALLET_DEDUCT: ['ADVANCE', 'SUB_ORDER', 'FUND'],
+  FUND_REFUND: ['CUSTOMER', 'WALLET'],
+  FUND_WRITEOFF: ['EXTERNAL'],
+  REFUND_TO_CUSTOMER: ['CUSTOMER'],
+};
+
 /** INFLOW 的 fundActionType → 候选来源池类型 */
 const IN_SOURCES: Record<string, PoolTypeKey[]> = {
   PAY_IN: ['CUSTOMER'],
@@ -117,6 +132,16 @@ const IN_SOURCES: Record<string, PoolTypeKey[]> = {
   FUND_REFUND_TO_WALLET: ['FUND'],
   FUND_WARRANT: ['EXTERNAL'],
   FUND_PAID_DIFF: ['EXTERNAL'],
+};
+
+/** INFLOW 的 groupType → 候选来源池类型 */
+const GROUP_IN_SOURCES: Record<string, PoolTypeKey[]> = {
+  CUST_PAY: ['CUSTOMER'],
+  ADVANCE_REFUND: ['ADVANCE'],
+  ORDER_REFUND: ['SUB_ORDER'],
+  WALLET_DEDUCT: ['WALLET'],
+  FUND_PAY: ['CUSTOMER', 'ADVANCE', 'WALLET'],
+  FUND_DEDUCT: ['ADVANCE', 'WALLET'],
 };
 
 export const POOL_TYPE_LABEL: Record<PoolTypeKey, string> = {
@@ -188,8 +213,9 @@ function virtualType(nodeId: string): PoolTypeKey {
 
 function isRefund(entry: FlowEntry): boolean {
   const at = entry.fundActionType ?? '';
+  const gt = entry.groupType ?? '';
   const desc = entry.fundActionDesc ?? '';
-  return at.includes('REFUND') || at.includes('WRITEOFF')
+  return at.includes('REFUND') || at.includes('WRITEOFF') || gt.includes('REFUND')
     || desc.includes('退款') || desc.includes('回流') || desc.includes('冲销');
 }
 
@@ -204,6 +230,7 @@ interface Rec {
   amt: number;
   grp: string | null;
   at: string;
+  gt: string | null;
   desc: string;
   refund: boolean;
   used: number;
@@ -227,6 +254,7 @@ export function buildFlowGraph(pools: FlowPool[], level: 'type' | 'pool' = 'type
         amt: toCents(entry.amount),
         grp: entry.transferGroupId ?? null,
         at: entry.fundActionType ?? '',
+        gt: entry.groupType ?? null,
         desc: entry.fundActionDesc ?? '',
         refund: isRefund(entry),
         used: 0,
@@ -278,7 +306,8 @@ export function buildFlowGraph(pools: FlowPool[], level: 'type' | 'pool' = 'type
 
   // ---- C. 语义规则表 + 等额优先匹配 ----
   const candidatesOf = (out: Rec): PoolTypeKey[] => {
-    return OUT_TARGETS[out.at]?.length ? OUT_TARGETS[out.at] : ['EXTERNAL'];
+    const byGroup = out.gt ? GROUP_OUT_TARGETS[out.gt] : undefined;
+    return byGroup?.length ? byGroup : (OUT_TARGETS[out.at]?.length ? OUT_TARGETS[out.at] : ['EXTERNAL']);
   };
   for (const out of recs) {
     if (out.dir !== 'OUTFLOW' || remain(out) <= 0) continue;
@@ -308,7 +337,8 @@ export function buildFlowGraph(pools: FlowPool[], level: 'type' | 'pool' = 'type
   }
   for (const inn of recs) {
     if (inn.dir !== 'INFLOW' || remain(inn) <= 0) continue;
-    const srcType = (IN_SOURCES[inn.at] ?? [])[0] ?? 'EXTERNAL';
+    const byGroup = inn.gt ? GROUP_IN_SOURCES[inn.gt] : undefined;
+    const srcType = (byGroup ?? IN_SOURCES[inn.at] ?? [])[0] ?? 'EXTERNAL';
     const take = remain(inn);
     inn.used += take;
     emit(virtualId(srcType), inn.pool, take, inn.refund ? 'REFUND' : 'FORWARD', 'INFERRED', inn);
