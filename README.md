@@ -30,6 +30,8 @@ npm run dev
 
 访问 http://127.0.0.1:5173，输入主单号（projectOrderId）即可查询账本。
 
+> 需要 Node.js ≥ 18（Vite 6 要求），推荐 18/20 LTS；本机多版本可用 `nvm use 18`。
+
 ## 接口说明
 
 ```bash
