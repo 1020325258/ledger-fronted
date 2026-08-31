@@ -15,6 +15,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-escrow/, ''),
       },
+      '/api-preview': {
+        target: 'http://preview-nrs-order-service.home.ke.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api-preview/, ''),
+      },
       '/api': {
         target: 'http://127.0.0.1:6881',
         changeOrigin: true,

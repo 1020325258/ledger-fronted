@@ -105,25 +105,32 @@ export interface ApiResult {
 
 // ============ 查询状态（URL 可分享） ============
 
-export type EnvName = 'localhost' | 'escrow';
-export type Perspective = 'customer' | 'service';
+export type EnvName = 'localhost' | 'escrow' | 'preview';
+
+/** 主视图。侧边栏切换的就是这个，不再是页内锚点。服务者和客户看同一套。 */
+export type ViewKey = 'overview' | 'map' | 'stream' | 'pools' | 'orders' | 'verify';
+
+export const VIEWS: ViewKey[] = ['overview', 'map', 'stream', 'pools', 'orders', 'verify'];
 
 export interface QueryState {
   projectOrderId: string;
   env: EnvName;
   verify: boolean;
-  grouped: boolean;
-  perspective: Perspective;
+  view: ViewKey;
+}
+
+function readView(raw: string | null): ViewKey {
+  return VIEWS.includes(raw as ViewKey) ? (raw as ViewKey) : 'overview';
 }
 
 export function readUrlState(): QueryState {
   const params = new URLSearchParams(window.location.search);
+  const env = params.get('env');
   return {
     projectOrderId: params.get('projectOrderId') ?? '',
-    env: params.get('env') === 'escrow' ? 'escrow' : 'localhost',
+    env: env === 'escrow' ? 'escrow' : env === 'preview' ? 'preview' : 'localhost',
     verify: params.get('verify') !== 'false',
-    grouped: params.get('mode') !== 'flat',
-    perspective: params.get('perspective') === 'customer' ? 'customer' : 'service',
+    view: readView(params.get('view')),
   };
 }
 
@@ -132,17 +139,20 @@ export function writeUrlState(state: QueryState): void {
   if (state.projectOrderId) params.set('projectOrderId', state.projectOrderId);
   if (state.env !== 'localhost') params.set('env', state.env);
   if (!state.verify) params.set('verify', 'false');
-  if (!state.grouped) params.set('mode', 'flat');
-  if (state.perspective !== 'service') params.set('perspective', 'customer');
+  if (state.view !== 'overview') params.set('view', state.view);
   const query = params.toString();
-  const url = `${window.location.pathname}${query ? `?${query}` : ''}`;
-  window.history.replaceState(null, '', url);
+  window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
 }
 
 // ============ 请求 ============
 
+/**
+ * 拉取账本。固定 groupByPool=true —— 池维度的 subFunds、balanceVerify、
+ * compositOrderNo 是页面的主要素材，平铺明细可以从池里取到，反之不行。
+ */
 export async function fetchLedger(state: QueryState): Promise<Ledger> {
-  const base = state.env === 'escrow' ? '/api-escrow' : '/api-local';
+  const base = state.env === 'preview' ? '/api-preview'
+    : state.env === 'escrow' ? '/api-escrow' : '/api-local';
   const url = `${base}/ledger/project?projectOrderId=${encodeURIComponent(state.projectOrderId)}`
     + `&verify=${state.verify}&groupByPool=true`;
   const response = await fetch(url, {
@@ -159,49 +169,6 @@ export async function fetchLedger(state: QueryState): Promise<Ledger> {
     throw new Error('账本为空：该主单号下没有资金池或流水');
   }
   return data;
-}
-
-// ============ 归一化工具 ============
-
-/** 全部明细（无论接口按池返回还是平铺返回，统一拍平并按时间排序） */
-export function allEntries(ledger: Ledger): LedgerEntry[] {
-  const source = ledger.entries ?? (ledger.pools ?? []).flatMap((p) => p.entries ?? []);
-  return source
-    .slice()
-    .sort((a, b) => String(a.finishTime ?? '').localeCompare(String(b.finishTime ?? '')));
-}
-
-/** 按 transferGroupId 分组（含未配对桶） */
-export function groupEntries(entries: LedgerEntry[]): Array<{ groupId: string | null; entries: LedgerEntry[] }> {
-  const map = new Map<string, LedgerEntry[]>();
-  const ungrouped: LedgerEntry[] = [];
-  for (const entry of entries) {
-    if (entry.transferGroupId) {
-      const list = map.get(entry.transferGroupId) ?? [];
-      list.push(entry);
-      map.set(entry.transferGroupId, list);
-    } else {
-      ungrouped.push(entry);
-    }
-  }
-  return [
-    ...[...map.entries()]
-      .map(([groupId, list]) => ({ groupId, entries: list }))
-      .sort((a, b) => String(maxFinishTime(b.entries)).localeCompare(String(maxFinishTime(a.entries)))),
-    ...(ungrouped.length ? [{ groupId: null, entries: ungrouped }] : []),
-  ];
-}
-
-function maxFinishTime(entries: LedgerEntry[]): string | number | null {
-  return entries.reduce<string | number | null>(
-    (acc, e) => (String(e.finishTime ?? '').localeCompare(String(acc ?? '')) > 0 ? (e.finishTime ?? null) : acc),
-    null,
-  );
-}
-
-/** 池 id → 池信息（展示时反查类型/名称） */
-export function poolIndex(pools: FundPool[]): Map<string, FundPool> {
-  return new Map(pools.map((p) => [p.poolId ?? '', p]));
 }
 
 // ============ 展示格式化工具 ============
@@ -262,27 +229,14 @@ export function compactNumber(value: number): string {
   return String(value);
 }
 
-export function shortPoolId(poolId: string): string {
-  return poolId.length > 16 ? `${poolId.slice(0, 6)}…${poolId.slice(-7)}` : poolId;
+/** "2026-08-04"，时间轴按天分组用。 */
+export function fmtDay(value: string | number | null | undefined): string {
+  const d = parseTime(value);
+  return d ? `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : '—';
 }
 
-export const POOL_TYPE_LABELS: Record<string, string> = {
-  CUSTOMER: '客户钱包',
-  ADVANCE: '预收款/首期款池',
-  WALLET: '客户余额池',
-  SUB_ORDER: '商品子单池',
-  FUND: '整装款项池',
-  DEVELOPER: '开发商池',
-  OTHER: '其他资金池',
-};
-
-export const POOL_TYPE_ICONS: Record<string, string> = {
-  CUSTOMER: '👤', ADVANCE: '🏦', WALLET: '💰', SUB_ORDER: '📦', FUND: '🏠', DEVELOPER: '🏢', OTHER: '📋',
-};
-
-export const CASHIER_TYPES: Record<number, string> = {
-  1: 'APP', 2: '微信', 5: '小程序', 9: '收银台', 13: '微信收银台', 15: '网银转账',
-  101: 'POS', 111: '装修分期', 112: '对公汇款', 113: '现金', 114: '线下凭证',
-  115: '预收款抵扣', 116: '退款抵扣', 124: '线上支付', 125: '款项抵扣',
-  126: '余额抵扣', 202: '支付宝', 306: '小程序支付',
-};
+/** "13:49"，时间轴行首用。 */
+export function fmtClock(value: string | number | null | undefined): string {
+  const d = parseTime(value);
+  return d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '—';
+}
