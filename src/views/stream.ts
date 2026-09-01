@@ -1,5 +1,5 @@
 /**
- * 资金流水 —— 主视图。
+ * 资金地图中的资金流水组件。
  *
  * 一行 = 一次资金操作（一个 transferGroupId），不是一条账本条目。
  * 所以「6/26 一笔 52,302.59 分摊到 3 个去处」显示成一行、展开看分摊，
@@ -11,7 +11,6 @@
 
 import { amount, escapeHtml, fmtClock, fmtDay, type LedgerEntry } from '../api';
 import type { ViewContext } from '../context';
-import { ACTION_TYPES, ENTRY_STATUS, PAIRING_REASONS } from '../codes';
 import { legDisplay, type TxnGroup } from '../groups';
 
 type FilterKey = 'ALL' | 'PAY' | 'DEDUCT' | 'REFUND' | 'OTHER';
@@ -24,12 +23,12 @@ const FILTERS: Array<{ key: FilterKey; label: string }> = [
   { key: 'OTHER', label: '其他/未配对' },
 ];
 
-/** 视图内状态：当前筛选 + 展开的组，切视图后保留。 */
+/** 组件内状态：当前筛选 + 展开的组，重新渲染资金地图后仍保留。 */
 const state = { filter: 'ALL' as FilterKey, expanded: new Set<string>() };
 
 function matches(group: TxnGroup, filter: FilterKey): boolean {
   if (filter === 'ALL') return true;
-  if (filter === 'OTHER') return group.info.kind === 'EXTERNAL' || group.info.kind === 'FALLBACK';
+  if (filter === 'OTHER') return group.info.kind === 'OTHER';
   return group.info.kind === filter;
 }
 
@@ -55,26 +54,19 @@ function sideSummary(legs: LedgerEntry[], ctx: ViewContext, noun: string, group:
   return `${ids.length} 个${noun}`;
 }
 
-/** 业务单号：客户和服务者都看得到，这是「因为发生了什么」的锚点。 */
-function refs(group: TxnGroup, ctx: ViewContext): string {
-  const merged: Record<string, unknown> = {};
-  group.legs.forEach((leg) => Object.entries(leg.metadata ?? {}).forEach(([k, v]) => {
-    if (v !== null && v !== '' && merged[k] === undefined) merged[k] = v;
-  }));
-  const items: string[] = [];
+function refs(group: TxnGroup, _ctx: ViewContext): string {
   const seen = new Set<string>();
-  const push = (label: string, value: unknown): void => {
-    const raw = String(value ?? '');
-    if (!raw || seen.has(raw)) return;
-    seen.add(raw);
-    items.push(label ? `${label} ${raw}` : raw);
-  };
-  push('售后单', merged.afterSaleNo ?? merged.afterSalesNo);
-  push('变更单', merged.projectChangeNo);
-  push('', merged.compositOrderNo);
-  push('来源', merged.refundFromOrderNo);
-  push('流水', merged.transactionNo);
-  if (group.pairingReason) items.push(`未配对：${PAIRING_REASONS[group.pairingReason] ?? group.pairingReason}`);
+  const items = group.legs.flatMap((leg) => leg.metadata ?? []).flatMap((item) => {
+    if (item.value == null || item.value === '') return [];
+    const text = Array.isArray(item.value)
+      ? `${item.label || '业务明细'} ${item.value.length} 项`
+      : `${item.label || ''} ${String(item.value)}`.trim();
+    if (seen.has(text)) return [];
+    seen.add(text);
+    return [text];
+  }).slice(0, 4);
+  const pairingDesc = group.legs.find((leg) => leg.pairingReasonDesc)?.pairingReasonDesc;
+  if (group.pairingReason) items.push(`未配对：${pairingDesc || group.pairingReason}`);
   else if (!group.info.singleSided && (!group.outLegs.length || !group.inLegs.length)) {
     items.push('该操作在账本里只有一侧记录，对端资金池归属断链');
   }
@@ -85,9 +77,9 @@ function refs(group: TxnGroup, ctx: ViewContext): string {
 function legLine(entry: LedgerEntry, ctx: ViewContext): string {
   const disp = legDisplay(entry, ctx.index);
   const inflow = entry.direction === 'INFLOW';
-  const desc = entry.fundActionDesc || ACTION_TYPES[entry.fundActionType ?? ''] || '';
+  const desc = entry.fundActionDesc || '业务动作待后端补充';
   const status = entry.status && entry.status !== 'SUCCESS'
-    ? ` <span class="tag tag-hold">${escapeHtml(ENTRY_STATUS[entry.status] ?? entry.status)}</span>` : '';
+    ? ` <span class="tag tag-hold">${escapeHtml(entry.statusDesc || entry.status)}</span>` : '';
   return `
     <div class="leg">
       <span>${disp.icon}</span>
@@ -104,9 +96,11 @@ function txnHtml(group: TxnGroup, ctx: ViewContext): string {
   const open = state.expanded.has(group.groupId);
   const legs = open ? `
     <div class="txn-legs">
-      ${group.outLegs.length ? `<div class="leg-split">出金 ${group.outLegs.length} 笔</div>${group.outLegs.map((l) => legLine(l, ctx)).join('')}` : ''}
-      ${group.inLegs.length ? `<div class="leg-split">入金 ${group.inLegs.length} 笔</div>${group.inLegs.map((l) => legLine(l, ctx)).join('')}` : ''}
-      <div class="leg-split"><a data-drawer="${escapeHtml(group.groupId)}" style="color:var(--accent);cursor:pointer">查看完整证据链与业务动作 →</a></div>
+      <div class="txn-leg-grid">
+        ${group.outLegs.length ? `<section class="txn-leg-section out"><header><span>出金明细</span><b>${group.outLegs.length} 笔</b></header><div>${group.outLegs.map((l) => legLine(l, ctx)).join('')}</div></section>` : ''}
+        ${group.inLegs.length ? `<section class="txn-leg-section in"><header><span>入金明细</span><b>${group.inLegs.length} 笔</b></header><div>${group.inLegs.map((l) => legLine(l, ctx)).join('')}</div></section>` : ''}
+      </div>
+      <div class="txn-evidence"><a data-drawer="${escapeHtml(group.groupId)}">查看完整证据链与业务动作 →</a></div>
     </div>` : '';
 
   return `
@@ -126,7 +120,7 @@ function txnHtml(group: TxnGroup, ctx: ViewContext): string {
     </div>`;
 }
 
-export function renderStream(target: HTMLElement, ctx: ViewContext, focus?: string): void {
+export function renderFundStream(target: HTMLElement, ctx: ViewContext, focus?: string): void {
   if (focus && FILTERS.some((f) => f.key === focus)) state.filter = focus as FilterKey;
   if (focus && ctx.groupById.has(focus)) state.expanded.add(focus);
 
@@ -157,9 +151,8 @@ export function renderStream(target: HTMLElement, ctx: ViewContext, focus?: stri
   }).join('');
 
   target.innerHTML = `
-    <div class="view-head">
-      <h2>资金流水</h2>
-      <p>一行是一次资金操作，不是一条账本条目 —— 一笔钱同时分摊到多个去处时合并显示，展开可以看到每个去处分了多少。</p>
+    <div class="map-stream-head">
+      <div><strong>资金流水</strong><span>一行代表一次资金操作；展开查看各资金池的出入金明细</span></div>
     </div>
     <div class="stream-filter">${chips}</div>
     <div class="card">
@@ -171,7 +164,7 @@ export function renderStream(target: HTMLElement, ctx: ViewContext, focus?: stri
   target.querySelectorAll<HTMLElement>('[data-filter]').forEach((node) => {
     node.addEventListener('click', () => {
       state.filter = node.dataset.filter as FilterKey;
-      renderStream(target, ctx);
+      renderFundStream(target, ctx);
     });
   });
   target.querySelectorAll<HTMLElement>('[data-toggle]').forEach((node) => {
@@ -179,7 +172,7 @@ export function renderStream(target: HTMLElement, ctx: ViewContext, focus?: stri
       const id = node.dataset.toggle as string;
       if (state.expanded.has(id)) state.expanded.delete(id);
       else state.expanded.add(id);
-      renderStream(target, ctx);
+      renderFundStream(target, ctx);
     });
   });
   target.querySelectorAll<HTMLElement>('[data-drawer]').forEach((node) => {

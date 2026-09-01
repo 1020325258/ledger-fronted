@@ -8,7 +8,6 @@
 
 import { amount, escapeHtml, fmtTime, number, type FundPool, type LedgerEntry } from '../api';
 import { poolColor, POOL_TYPE_ORDER, type ViewContext } from '../context';
-import { SUB_FUND_ITEM_TYPES } from '../codes';
 import { legDisplay, poolDisplay, poolsByType, totalBalance } from '../groups';
 import { renderFlowMap, type LaneMode } from '../charts/flowmap';
 import { renderWaterfall } from '../charts/waterfall';
@@ -18,9 +17,9 @@ let laneMode: LaneMode = 'type';
 
 
 /** 子款项展示名：名字里已经含了类型（如「增项款4656」）就不再补类型后缀。 */
-function subFundLabel(itemName: string, fallbackName: string, itemType?: number): string {
+function subFundLabel(itemName: string, fallbackName: string, itemTypeDesc?: string): string {
   const name = itemName || fallbackName || '—';
-  const typeName = itemType != null ? SUB_FUND_ITEM_TYPES[itemType] ?? '' : '';
+  const typeName = itemTypeDesc ?? '';
   return typeName && !name.includes(typeName) ? `${name}（${typeName}）` : name;
 }
 
@@ -73,7 +72,7 @@ function subFundTable(pool: FundPool): string {
     const paid = number(s.paidAmount);
     const gap = Math.round((due - paid) * 100) / 100;
     return `<tr>
-      <td>${escapeHtml(subFundLabel(s.subFundItemName ?? '', s.subFundName ?? '', s.subFundItemType))}</td>
+      <td>${escapeHtml(subFundLabel(s.subFundItemName ?? '', s.subFundName ?? '', s.subFundItemTypeDesc))}</td>
       <td>${amount(due)}</td>
       <td>${amount(paid)}</td>
       <td class="${gap > 0 ? 'negative' : 'zero'}">${amount(gap)}</td>

@@ -1,7 +1,6 @@
 /** 资金事件地图：一个 transferGroupId 翻译成一句可读、可核对的资金事实。 */
 import { amount, escapeHtml, fmtClock, fmtDay, number } from '../api';
 import type { ViewContext } from '../context';
-import { CHANGE_SOURCES, CHANGE_TYPES, ENTRY_STATUS, REFUND_MODES } from '../codes';
 import { legDisplay, type TxnGroup } from '../groups';
 
 function unique(values: string[]): string[] { return [...new Set(values.filter(Boolean))]; }
@@ -14,24 +13,10 @@ function side(group: TxnGroup, ctx: ViewContext, direction: 'out' | 'in'): strin
   if (!legs.length) return '系统外';
   return unique(legs.map((leg) => legDisplay(leg, ctx.index).name)).join('、');
 }
-function metadata(group: TxnGroup): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  group.legs.forEach((leg) => Object.entries(leg.metadata ?? {}).forEach(([key, value]) => {
-    if (value !== null && value !== '' && result[key] === undefined) result[key] = value;
-  }));
-  return result;
-}
 function reason(group: TxnGroup): string {
-  const meta = metadata(group);
-  const parts: string[] = [];
-  const changeType = CHANGE_TYPES[Number(meta.changeType)];
-  const changeSource = CHANGE_SOURCES[Number(meta.changeSource)];
-  const refundMode = REFUND_MODES[Number(meta.refundMode)];
-  if (changeType && changeType !== '默认') parts.push(`报价${changeType}`);
-  if (changeSource && changeSource !== '未知') parts.push(changeSource);
-  if (refundMode) parts.push(`退款去向：${refundMode}`);
-  if (meta.afterSaleNo ?? meta.afterSalesNo) parts.push(`售后单 ${String(meta.afterSaleNo ?? meta.afterSalesNo)}`);
-  if (meta.projectChangeNo) parts.push(`变更单 ${String(meta.projectChangeNo)}`);
+  const parts = group.legs.flatMap((leg) => leg.metadata ?? []).flatMap((item) =>
+    item.value != null && item.value !== '' && !Array.isArray(item.value)
+      ? [`${item.label || ''} ${String(item.value)}`.trim()] : []);
   return unique(parts).join(' · ') || '接口未提供独立发生原因';
 }
 function actor(group: TxnGroup): { name: string; verb: string } {
@@ -68,7 +53,8 @@ export function renderEventMap(ctx: ViewContext): string {
     const why = reason(group);
     const effect = impact(delta);
     const statuses = unique(group.legs.map((leg) => String(leg.status ?? '')).filter(Boolean));
-    const status = group.hasExecuting ? '处理中' : statuses.length === 1 ? (ENTRY_STATUS[statuses[0]] ?? statuses[0]) : '已完成';
+    const statusDesc = group.legs.find((leg) => leg.statusDesc)?.statusDesc;
+    const status = group.hasExecuting ? (statusDesc || '处理中') : statuses.length === 1 ? (statusDesc || statuses[0]) : '已完成';
     const sentence = `${who.name}在 ${fmtDay(group.startTime)} ${fmtClock(group.startTime)} ${who.verb}“${action}”，触发 ${amount(group.amount)} 元从${from}转移到${to}。`;
     return `<button class="money-event-card ${effect.css}" type="button" data-group="${escapeHtml(group.groupId)}">
       <span class="money-event-index">${String(index + 1).padStart(2, '0')}</span>

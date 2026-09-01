@@ -8,14 +8,13 @@
 import { amount, escapeHtml, number, type FundPool } from '../api';
 import { poolPalette, type ViewContext } from '../context';
 import { poolDisplay } from '../groups';
-import { SUB_FUND_ITEM_TYPES } from '../codes';
 
 function subFundDetail(pool: FundPool): string {
   const subs = pool.subFunds ?? [];
   if (!subs.length) return '';
   return subs.map((s) => {
     const name = s.subFundItemName || s.subFundName || '—';
-    const type = s.subFundItemType != null ? SUB_FUND_ITEM_TYPES[s.subFundItemType] ?? '' : '';
+    const type = s.subFundItemTypeDesc ?? '';
     return `${name}${type && !name.includes(type) ? `（${type}）` : ''}：实收 ${amount(s.paidAmount)} 元`;
   }).join('；');
 }

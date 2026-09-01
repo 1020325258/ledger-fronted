@@ -12,9 +12,8 @@ import {
 } from './api';
 import { allEntries, buildGroups, poolIndex } from './groups';
 import type { ViewContext } from './context';
-import { closeDrawer, openGroupDrawer } from './drawer';
+import { closeDrawer, openGroupDrawer, openPoolDrawer, openPoolTypeDrawer } from './drawer';
 import { renderOverview } from './views/overview';
-import { renderStream } from './views/stream';
 import { renderPools } from './views/pools';
 import { renderOrders } from './views/orders';
 import { renderVerify } from './views/verify';
@@ -23,7 +22,6 @@ import { renderMoneyMap } from './views/map';
 const VIEW_META: Record<ViewKey, { label: string; icon: string }> = {
   overview: { label: '资金总览', icon: '◎' },
   map: { label: '资金地图', icon: '⌁' },
-  stream: { label: '资金流水', icon: '≡' },
   pools: { label: '资金流向', icon: '⇄' },
   orders: { label: '订单与款项', icon: '▤' },
   verify: { label: '对账与校验', icon: '✓' },
@@ -85,7 +83,6 @@ function showNotice(message: string, error = false): void {
 function badge(view: ViewKey): string {
   if (!ctx) return '';
   switch (view) {
-    case 'stream':
     case 'map':
       return String(ctx.groups.length);
     case 'pools':
@@ -135,8 +132,7 @@ function renderView(focus?: string): void {
   viewHost.scrollTop = 0;
   switch (state.view) {
     case 'overview': renderOverview(viewHost, ctx); break;
-    case 'map': renderMoneyMap(viewHost, ctx); break;
-    case 'stream': renderStream(viewHost, ctx, focus); break;
+    case 'map': renderMoneyMap(viewHost, ctx, focus); break;
     case 'pools': renderPools(viewHost, ctx, focus); break;
     case 'orders': renderOrders(viewHost, ctx); break;
     case 'verify': renderVerify(viewHost, ctx); break;
@@ -152,7 +148,7 @@ function goView(view: ViewKey, focus?: string): void {
   renderView(focus);
 }
 
-function openGroup(groupId: string): void {
+function openGroup(groupId: string, focus?: { direction: 'OUTFLOW' | 'INFLOW'; accountType: string }): void {
   if (!ctx) return;
   const group = ctx.groupById.get(groupId);
   if (!group) return;
@@ -160,6 +156,25 @@ function openGroup(groupId: string): void {
     index: ctx.index,
     groups: ctx.groups,
     onOpen: (id) => openGroup(id),
+  }, focus);
+}
+
+function openPool(poolId: string): void {
+  if (!ctx) return;
+  openPoolDrawer(poolId, {
+    index: ctx.index,
+    groups: ctx.groups,
+    onOpen: (id) => openGroup(id),
+  });
+}
+
+function openPoolType(poolType: string): void {
+  if (!ctx) return;
+  openPoolTypeDrawer(poolType, {
+    index: ctx.index,
+    groups: ctx.groups,
+    onOpen: (id) => openGroup(id),
+    onOpenPool: (id) => openPool(id),
   });
 }
 
@@ -181,6 +196,8 @@ function buildContext(data: Ledger): ViewContext {
     groupByEntryId,
     index: poolIndex(pools),
     openGroup,
+    openPool,
+    openPoolType,
     goView,
   };
 }

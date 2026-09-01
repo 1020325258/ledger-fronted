@@ -17,11 +17,63 @@ export interface LedgerEntry {
   fundActionDesc?: string;
   transferGroupId?: string | null;
   groupType?: string | null;
+  groupTypeDesc?: string | null;
+  groupCategory?: 'PAY' | 'REFUND' | 'DEDUCT' | 'OTHER' | null;
+  groupSingleSided?: boolean | null;
   status?: string | null;
+  statusDesc?: string | null;
   sourceTable?: string;
   sourceRecordId?: string;
   finishTime?: string | number | null;
-  metadata?: Record<string, unknown>;
+  metadata?: LedgerMetadataItem[];
+  pairingStatus?: string | null;
+  pairingStatusDesc?: string | null;
+  pairingReason?: string | null;
+  pairingReasonDesc?: string | null;
+}
+
+export interface LedgerMetadataItem {
+  key?: string;
+  label?: string;
+  value?: unknown;
+}
+
+export function metadataItem(entry: LedgerEntry, key: string): LedgerMetadataItem | undefined {
+  return entry.metadata?.find((item) => item.key === key);
+}
+
+export function metadataValue(entry: LedgerEntry, key: string): unknown {
+  return metadataItem(entry, key)?.value;
+}
+
+export interface PaidSkuItem {
+  skuId?: string | number;
+  skuUniqueKey?: string;
+  skuName?: string;
+  paymentOrderNo?: string;
+  quantity?: number;
+  consumption?: number;
+  apportionedAmount?: number;
+  fundType?: number;
+  fundTypeDesc?: string;
+  subFundType?: number;
+  subFundTypeDesc?: string;
+}
+
+export interface ChangedSkuItem {
+  itemChangeRecordId?: number;
+  skuId?: string | number;
+  skuUniqueKey?: string;
+  skuName?: string;
+  categoryName?: string;
+  originQuantity?: number;
+  changedQuantity?: number;
+  afterQuantity?: number;
+  originConsumption?: number;
+  changedConsumption?: number;
+  afterConsumption?: number;
+  changedPaidAmount?: number;
+  actualRefundAmount?: number;
 }
 
 export interface SubFundPoolInfo {
@@ -29,6 +81,7 @@ export interface SubFundPoolInfo {
   subFundName?: string;
   subFundItemName?: string;
   subFundItemType?: number;
+  subFundItemTypeDesc?: string;
   dueAmount?: number;
   paidAmount?: number;
   tobeRefundAmount?: number;
@@ -108,9 +161,9 @@ export interface ApiResult {
 export type EnvName = 'localhost' | 'escrow' | 'preview';
 
 /** 主视图。侧边栏切换的就是这个，不再是页内锚点。服务者和客户看同一套。 */
-export type ViewKey = 'overview' | 'map' | 'stream' | 'pools' | 'orders' | 'verify';
+export type ViewKey = 'overview' | 'map' | 'pools' | 'orders' | 'verify';
 
-export const VIEWS: ViewKey[] = ['overview', 'map', 'stream', 'pools', 'orders', 'verify'];
+export const VIEWS: ViewKey[] = ['overview', 'map', 'pools', 'orders', 'verify'];
 
 export interface QueryState {
   projectOrderId: string;
@@ -120,6 +173,7 @@ export interface QueryState {
 }
 
 function readView(raw: string | null): ViewKey {
+  if (raw === 'stream') return 'map';
   return VIEWS.includes(raw as ViewKey) ? (raw as ViewKey) : 'overview';
 }
 

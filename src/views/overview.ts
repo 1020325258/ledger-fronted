@@ -84,7 +84,7 @@ export function renderOverview(target: HTMLElement, ctx: ViewContext): void {
         <p>客户支付、内部池账面存量、退回客户分别独立统计；内部存量还可能包含期初或其他来源资金。</p>
       </div>
       <div class="story-flow">
-        <button class="story-node source" data-story="stream">
+        <button class="story-node source" data-story="map">
           <small>累计流量 · 客户支付</small><strong>${amount(data.customerTotalPay)}</strong><span>看支付操作</span>
         </button>
         <div class="story-results">
@@ -138,12 +138,12 @@ export function renderOverview(target: HTMLElement, ctx: ViewContext): void {
       ctx.goView('pools', firstPool);
     });
   });
-  target.querySelector<HTMLElement>('[data-goto-refund]')?.addEventListener('click', () => ctx.goView('stream', 'REFUND'));
+  target.querySelector<HTMLElement>('[data-goto-refund]')?.addEventListener('click', () => ctx.goView('map', 'REFUND'));
   target.querySelectorAll<HTMLElement>('[data-story]').forEach((node) => {
     node.addEventListener('click', () => {
       const story = node.dataset.story;
-      if (story === 'refund') ctx.goView('stream', 'REFUND');
-      else if (story === 'stream') ctx.goView('stream');
+      if (story === 'refund') ctx.goView('map', 'REFUND');
+      else if (story === 'map') ctx.goView('map');
       else ctx.goView('pools');
     });
   });

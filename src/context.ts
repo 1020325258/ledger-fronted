@@ -20,7 +20,11 @@ export interface ViewContext {
   /** poolId → 池 */
   index: Map<string, FundPool>;
   /** 打开某笔操作的溯源抽屉 */
-  openGroup: (groupId: string) => void;
+  openGroup: (groupId: string, focus?: { direction: 'OUTFLOW' | 'INFLOW'; accountType: string }) => void;
+  /** 打开某个资金池关联的全部资金操作。 */
+  openPool: (poolId: string) => void;
+  /** 打开某类资金池的全部池明细。 */
+  openPoolType: (poolType: string) => void;
   /** 切到某个视图，focus 为视图内要展开/定位的对象 id */
   goView: (view: ViewKey, focus?: string) => void;
 }

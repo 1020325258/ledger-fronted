@@ -7,14 +7,13 @@
 
 import { amount, escapeHtml, number, type FundPool } from '../api';
 import { poolColor, type ViewContext } from '../context';
-import { SUB_FUND_ITEM_TYPES } from '../codes';
 import { poolDisplay, shortId, totalBalance } from '../groups';
 
 
 /** 子款项展示名：名字里已经含了类型（如「增项款4656」）就不再补类型后缀。 */
-function subFundLabel(itemName: string, fallbackName: string, itemType?: number): string {
+function subFundLabel(itemName: string, fallbackName: string, itemTypeDesc?: string): string {
   const name = itemName || fallbackName || '—';
-  const typeName = itemType != null ? SUB_FUND_ITEM_TYPES[itemType] ?? '' : '';
+  const typeName = itemTypeDesc ?? '';
   return typeName && !name.includes(typeName) ? `${name}（${typeName}）` : name;
 }
 
@@ -33,7 +32,7 @@ function fundSection(pools: FundPool[]): string {
       const sPaid = number(s.paidAmount);
       const sGap = Math.round((sDue - sPaid) * 100) / 100;
       return `<tr>
-        <td style="padding-left:24px">${escapeHtml(subFundLabel(s.subFundItemName ?? '', s.subFundName ?? '', s.subFundItemType))}</td>
+        <td style="padding-left:24px">${escapeHtml(subFundLabel(s.subFundItemName ?? '', s.subFundName ?? '', s.subFundItemTypeDesc))}</td>
         <td>${amount(sDue)}</td>
         <td>${amount(sPaid)}</td>
         <td class="${sGap > 0.005 ? 'negative' : 'zero'}">${amount(Math.max(0, sGap))}</td>

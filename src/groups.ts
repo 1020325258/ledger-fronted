@@ -14,11 +14,13 @@
 
 import { number, type FundPool, type LedgerEntry } from './api';
 import { poolIcon } from './charts/icons';
-import { groupTypeInfo, poolTypeInfo, type GroupTypeInfo } from './codes';
+import type { ActionKind, GroupTypeInfo } from './codes';
 
 export interface TxnGroup {
   /** transferGroupId 原值；后端兜底组为 GRP_INTERNAL_ 前缀 */
   groupId: string;
+  /** 接口返回的 groupType 原值；用于按资金动作枚举分类统计。 */
+  groupType: string;
   /** groupType 对应的动作语义 */
   info: GroupTypeInfo;
   /** 出金腿（direction=OUTFLOW） */
@@ -76,9 +78,16 @@ export function buildGroups(entries: LedgerEntry[]): TxnGroup[] {
     const inCents = inLegs.reduce((sum, e) => sum + cents(e.amount), 0);
     const first = legs[0];
     const last = legs[legs.length - 1];
+    const kind: ActionKind = first?.groupCategory || 'OTHER';
     return {
       groupId,
-      info: groupTypeInfo(first?.groupType),
+      groupType: first?.groupType ?? '',
+      info: {
+        label: first?.groupTypeDesc || '业务类型待后端补充',
+        kind,
+        icon: kind === 'PAY' ? '↓' : kind === 'REFUND' ? '↩' : kind === 'DEDUCT' ? '⇄' : '•',
+        singleSided: first?.groupSingleSided === true,
+      },
       outLegs,
       inLegs,
       legs,
@@ -87,7 +96,7 @@ export function buildGroups(entries: LedgerEntry[]): TxnGroup[] {
       startTime: timeKey(first),
       endTime: timeKey(last),
       hasExecuting: legs.some((e) => e.status === 'EXECUTING'),
-      pairingReason: String(first?.metadata?.pairingReason ?? ''),
+      pairingReason: String(first?.pairingReason ?? ''),
     };
   });
 
@@ -121,13 +130,11 @@ export function poolIndex(pools: FundPool[]): Map<string, FundPool> {
 }
 
 /**
- * 池的展示信息。优先用接口给的 poolTypeDesc / fundName，
- * 接口没给才回落到本地码表。
+ * 池的展示信息。业务名称和内外部属性只使用接口返回值。
  */
 export function poolDisplay(poolId: string, poolType?: string, pool?: FundPool): PoolDisplay {
-  const type = poolTypeInfo(poolType ?? pool?.poolType);
-  const typeName = pool?.poolTypeDesc || type.label;
-  const external = type.scope === 'EXTERNAL';
+  const typeName = pool?.poolTypeDesc || pool?.fundName || '资金池信息待后端补充';
+  const external = pool?.poolScope === 'EXTERNAL';
   // FUND 池的 poolTypeDesc 与 fundName 常常是同一个值（都为「工程款」），只拼一次
   const name = pool?.fundName && pool.fundName !== typeName ? `${typeName}·${pool.fundName}` : typeName;
   const iconType = poolType ?? pool?.poolType ?? 'OTHER';
@@ -139,7 +146,7 @@ export function poolDisplay(poolId: string, poolType?: string, pool?: FundPool):
     shortId: external ? '' : shortId(poolId),
     fullId: poolId,
     note: pool?.compositOrderNo ? `所属 ${pool.compositOrderNo}` : '',
-    scope: type.scope,
+    scope: pool?.poolScope === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL',
   };
 }
 

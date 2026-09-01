@@ -2,7 +2,6 @@
 
 import { amount, escapeHtml, fmtClock, fmtDay, number } from '../api';
 import type { ViewContext } from '../context';
-import { CASHIER_TYPES, CHANGE_SOURCES, CHANGE_TYPES, REFUND_MODES, SOURCE_TABLES } from '../codes';
 import { legDisplay, type TxnGroup } from '../groups';
 
 function unique(values: string[]): string[] { return [...new Set(values.filter(Boolean))]; }
@@ -12,37 +11,14 @@ function descriptions(group: TxnGroup): string[] {
     .filter((desc) => desc !== 'null' && desc !== 'undefined');
 }
 
-function mergedMetadata(group: TxnGroup): Record<string, unknown> {
-  const merged: Record<string, unknown> = {};
-  group.legs.forEach((leg) => Object.entries(leg.metadata ?? {}).forEach(([key, value]) => {
-    if (value !== null && value !== '' && merged[key] === undefined) merged[key] = value;
-  }));
-  return merged;
-}
-
-function enumText(value: unknown, labels: Record<number, string>): string {
-  if (value === undefined || value === null || value === '') return '';
-  return labels[Number(value)] ?? String(value);
-}
-
 /** 只展示可核实的业务原因或依据，不根据金额、池名猜测。 */
 function reason(group: TxnGroup): { text: string; fallback: boolean } {
-  const meta = mergedMetadata(group);
-  const reasons: string[] = [];
-  const changeType = enumText(meta.changeType, CHANGE_TYPES);
-  const changeSource = enumText(meta.changeSource, CHANGE_SOURCES);
-  const refundMode = enumText(meta.refundMode, REFUND_MODES);
-  const cashier = enumText(meta.cashierType, CASHIER_TYPES);
-  if (changeType && changeType !== '默认') reasons.push(`报价变更：${changeType}`);
-  if (changeSource && changeSource !== '未知') reasons.push(`预收款变动：${changeSource}`);
-  if (refundMode) reasons.push(`退款去向：${refundMode}`);
-  if (meta.afterSaleNo ?? meta.afterSalesNo) reasons.push(`售后单 ${String(meta.afterSaleNo ?? meta.afterSalesNo)}`);
-  if (meta.projectChangeNo) reasons.push(`变更单 ${String(meta.projectChangeNo)}`);
-  if (meta.refundFromOrderNo) reasons.push(`退款来源订单 ${String(meta.refundFromOrderNo)}`);
-  if (cashier && !reasons.length) reasons.push(`支付渠道：${cashier}`);
+  const reasons = unique(group.legs.flatMap((leg) => leg.metadata ?? []).flatMap((item) =>
+    item.value != null && item.value !== '' && !Array.isArray(item.value)
+      ? [`${item.label || ''} ${String(item.value)}`.trim()] : []));
   if (reasons.length) return { text: unique(reasons).join(' · '), fallback: false };
 
-  const sources = unique(group.legs.map((leg) => SOURCE_TABLES[leg.sourceTable ?? ''] ?? String(leg.sourceTable ?? '')).filter(Boolean));
+  const sources = unique(group.legs.map((leg) => String(leg.sourceTable ?? '')).filter(Boolean));
   if (sources.length) return { text: `接口未提供独立原因；业务依据来自${sources.join('、')}`, fallback: true };
   return { text: '接口未提供发生原因或业务依据', fallback: true };
 }
