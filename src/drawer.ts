@@ -9,7 +9,8 @@
  */
 
 import { amount, escapeHtml, fmtTime, metadataValue, type ChangedSkuItem, type FundPool, type LedgerEntry, type PaidSkuItem } from './api';
-import { legDisplay, type TxnGroup } from './groups';
+import type { PoolFlowSelection } from './context';
+import { groupEdges, legDisplay, type TxnGroup } from './groups';
 
 export interface DrawerContext {
   index: Map<string, FundPool>;
@@ -221,6 +222,47 @@ export function openPoolTypeDrawer(poolType: string, ctx: DrawerContext): void {
   el.querySelectorAll('[data-close]').forEach((node) => node.addEventListener('click', closeDrawer));
   el.querySelectorAll<HTMLElement>('[data-pool-detail]').forEach((node) => {
     node.addEventListener('click', () => ctx.onOpenPool?.(node.dataset.poolDetail as string));
+  });
+}
+
+function legPoolType(entry: LedgerEntry, ctx: DrawerContext): string {
+  return entry.accountType || ctx.index.get(entry.accountId ?? '')?.poolType || 'OTHER';
+}
+
+/** 聚合线只负责筛选操作；每一行继续下钻到后端 transferGroupId 对应的完整事实。 */
+export function openPoolFlowDrawer(selection: PoolFlowSelection, ctx: DrawerContext): void {
+  const selectedIds = new Set(selection.groupIds);
+  const rows = ctx.groups.filter((group) => selectedIds.has(group.groupId)).map((group) => {
+    const flowAmount = (groupEdges(group) ?? []).filter((edge) => {
+      const from = group.outLegs.find((leg) => leg.accountId === edge.from);
+      const to = group.inLegs.find((leg) => leg.accountId === edge.to);
+      return Boolean(from && to
+        && legPoolType(from, ctx) === selection.fromType
+        && legPoolType(to, ctx) === selection.toType);
+    }).reduce((sum, edge) => sum + Number(edge.amount ?? 0), 0);
+    const relatedLegs = group.legs.filter((leg) => {
+      const type = legPoolType(leg, ctx);
+      return type === selection.fromType || type === selection.toType;
+    });
+    const actions = [...new Set(relatedLegs.map(actionLabel))].join(' / ');
+    return `<button type="button" class="pool-operation flow-operation" data-flow-operation="${escapeHtml(group.groupId)}">
+      <span class="pool-operation-time">${escapeHtml(fmtTime(group.startTime))}</span>
+      <span><b>${escapeHtml(group.info.label)}</b><small>${escapeHtml(actions)}</small></span>
+      <strong>${amount(flowAmount)} 元</strong><i>→</i>
+    </button>`;
+  }).join('');
+  const el = ensureHost();
+  el.innerHTML = `<div class="scrim" data-close="1"></div>
+    <aside class="drawer" role="dialog" aria-label="资金流转对应操作">
+      <div class="drawer-head"><div class="dh-top"><span class="txn-icon move">⇄</span><h3>资金流转明细</h3><button class="drawer-close" data-close="1" aria-label="关闭">×</button></div>
+        <div class="drawer-amount">${amount(selection.amount)} <small style="font-size:13px;font-weight:400">元</small></div>
+        <div class="drawer-time">${escapeHtml(selection.fromLabel)} → ${escapeHtml(selection.toLabel)} · ${selection.groupIds.length} 次资金操作</div>
+      </div>
+      <div class="drawer-body"><div class="dsec"><h4>对应资金操作</h4><div class="pool-operation-list">${rows || '<div class="empty">暂无相关操作</div>'}</div></div></div>
+    </aside>`;
+  el.querySelectorAll('[data-close]').forEach((node) => node.addEventListener('click', closeDrawer));
+  el.querySelectorAll<HTMLElement>('[data-flow-operation]').forEach((node) => {
+    node.addEventListener('click', () => ctx.onOpen(node.dataset.flowOperation as string));
   });
 }
 

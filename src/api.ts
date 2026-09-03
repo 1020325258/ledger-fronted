@@ -161,9 +161,9 @@ export interface ApiResult {
 export type EnvName = 'localhost' | 'escrow' | 'preview';
 
 /** 主视图。侧边栏切换的就是这个，不再是页内锚点。服务者和客户看同一套。 */
-export type ViewKey = 'overview' | 'map' | 'pools' | 'orders' | 'verify';
+export type ViewKey = 'overview' | 'customer' | 'map' | 'pools' | 'orders' | 'verify';
 
-export const VIEWS: ViewKey[] = ['overview', 'map', 'pools', 'orders', 'verify'];
+export const VIEWS: ViewKey[] = ['overview', 'customer', 'map', 'pools', 'orders', 'verify'];
 
 export interface QueryState {
   projectOrderId: string;

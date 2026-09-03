@@ -11,16 +11,18 @@ import {
   type Ledger, type QueryState, type ViewKey,
 } from './api';
 import { allEntries, buildGroups, poolIndex } from './groups';
-import type { ViewContext } from './context';
-import { closeDrawer, openGroupDrawer, openPoolDrawer, openPoolTypeDrawer } from './drawer';
+import type { PoolFlowSelection, ViewContext } from './context';
+import { closeDrawer, openGroupDrawer, openPoolDrawer, openPoolFlowDrawer, openPoolTypeDrawer } from './drawer';
 import { renderOverview } from './views/overview';
 import { renderPools } from './views/pools';
 import { renderOrders } from './views/orders';
 import { renderVerify } from './views/verify';
 import { renderMoneyMap } from './views/map';
+import { renderCustomerJourney } from './views/customer';
 
 const VIEW_META: Record<ViewKey, { label: string; icon: string }> = {
   overview: { label: '资金总览', icon: '◎' },
+  customer: { label: '客户资金全景', icon: '⌘' },
   map: { label: '资金地图', icon: '⌁' },
   pools: { label: '资金流向', icon: '⇄' },
   orders: { label: '订单与款项', icon: '▤' },
@@ -132,6 +134,7 @@ function renderView(focus?: string): void {
   viewHost.scrollTop = 0;
   switch (state.view) {
     case 'overview': renderOverview(viewHost, ctx); break;
+    case 'customer': renderCustomerJourney(viewHost, ctx); break;
     case 'map': renderMoneyMap(viewHost, ctx, focus); break;
     case 'pools': renderPools(viewHost, ctx, focus); break;
     case 'orders': renderOrders(viewHost, ctx); break;
@@ -178,6 +181,15 @@ function openPoolType(poolType: string): void {
   });
 }
 
+function openPoolFlow(selection: PoolFlowSelection): void {
+  if (!ctx) return;
+  openPoolFlowDrawer(selection, {
+    index: ctx.index,
+    groups: ctx.groups,
+    onOpen: (id) => openGroup(id),
+  });
+}
+
 function buildContext(data: Ledger): ViewContext {
   const pools = data.pools ?? [];
   const entries = allEntries(pools, data.entries);
@@ -198,6 +210,7 @@ function buildContext(data: Ledger): ViewContext {
     openGroup,
     openPool,
     openPoolType,
+    openPoolFlow,
     goView,
   };
 }

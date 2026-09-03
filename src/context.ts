@@ -8,6 +8,15 @@
 import type { FundPool, Ledger, LedgerEntry, ViewKey } from './api';
 import type { TxnGroup } from './groups';
 
+export interface PoolFlowSelection {
+  fromType: string;
+  fromLabel: string;
+  toType: string;
+  toLabel: string;
+  amount: number;
+  groupIds: string[];
+}
+
 export interface ViewContext {
   data: Ledger;
   pools: FundPool[];
@@ -25,6 +34,8 @@ export interface ViewContext {
   openPool: (poolId: string) => void;
   /** 打开某类资金池的全部池明细。 */
   openPoolType: (poolType: string) => void;
+  /** 打开一条聚合资金线对应的全部资金操作。 */
+  openPoolFlow: (selection: PoolFlowSelection) => void;
   /** 切到某个视图，focus 为视图内要展开/定位的对象 id */
   goView: (view: ViewKey, focus?: string) => void;
 }
