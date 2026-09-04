@@ -7,7 +7,7 @@ import { amount, escapeHtml, number, type LedgerEntry } from '../api';
 import { type PoolFlowSelection, type ViewContext } from '../context';
 import { groupEdges, legDisplay, type TxnGroup } from '../groups';
 
-type NodeKind = 'payment' | 'prepay' | 'order' | 'account' | 'other';
+type NodeKind = 'payment' | 'prepay' | 'order' | 'account' | 'operation' | 'other';
 interface FlowNode { id:string; column:number; kind:NodeKind; eyebrow:string; title:string; amountText:string; meta:string; poolType?:string; groupId?:string; x:number; y:number }
 interface FlowEdge { from:string; to:string; kind:'payment'|'allocate'|'refund'|'exit'; amount:number; groupIds:Set<string> }
 const COLUMN_X = [16,268,520,772,1024];
@@ -47,11 +47,31 @@ function addPoolNode(nodes:Map<string,FlowNode>, entry:LedgerEntry, ctx:ViewCont
   return id;
 }
 
-function buildNetwork(ctx:ViewContext, groups:TxnGroup[], asOf:string, visibleGroupIds:Set<string>):{nodes:FlowNode[];edges:FlowEdge[];omitted:number} {
-  const nodes = new Map<string,FlowNode>(); const edgeMap=new Map<string,FlowEdge>(); let omitted=0;
+function addSingleSidedOperationNode(nodes:Map<string,FlowNode>, group:TxnGroup, ctx:ViewContext):void {
+  const entry = group.legs[0];
+  if (!entry) return;
+  const display = legDisplay(entry,ctx.index);
+  const direction = entry.direction === 'INFLOW' ? '转入' : '转出';
+  const id = `operation:${group.groupId}`;
+  nodes.set(id,{id,column:2,kind:'operation',eyebrow:'资金池内操作',title:group.info.label,
+    amountText:`${direction} ¥${amount(group.amount)}`,
+    meta:[display.name,display.fullId,`${group.legs.length} 条账本明细`].filter(Boolean).join(' · '),
+    poolType:entry.accountType ?? ctx.index.get(entry.accountId ?? '')?.poolType,
+    groupId:group.groupId,x:0,y:0});
+}
+
+function buildNetwork(ctx:ViewContext, groups:TxnGroup[], asOf:string, visibleGroupIds:Set<string>):{nodes:FlowNode[];edges:FlowEdge[];omitted:number;standalone:number} {
+  const nodes = new Map<string,FlowNode>(); const edgeMap=new Map<string,FlowEdge>(); let omitted=0; let standalone=0;
   groups.slice().reverse().forEach(group=>{
     const resolved=groupEdges(group);
-    if (resolved==null || !resolved.length){ if(visibleGroupIds.has(group.groupId))omitted+=1; return; }
+    if (resolved==null){ if(visibleGroupIds.has(group.groupId))omitted+=1; return; }
+    if (!resolved.length){
+      // 后端明确标记 singleSided 的单边操作没有跨池对端，但仍是客户链路中的真实步骤。
+      // 展示为独立的“资金池内操作”节点，不虚构一条自环或跨池连线。
+      if(group.info.singleSided){ addSingleSidedOperationNode(nodes,group,ctx); if(visibleGroupIds.has(group.groupId))standalone+=1; }
+      else if(visibleGroupIds.has(group.groupId))omitted+=1;
+      return;
+    }
     resolved.forEach(edge=>{
       const fromEntry=group.outLegs.find(entry=>entry.accountId===edge.from);
       const toEntry=group.inLegs.find(entry=>entry.accountId===edge.to);
@@ -82,6 +102,7 @@ function buildNetwork(ctx:ViewContext, groups:TxnGroup[], asOf:string, visibleGr
   const firstIds=new Set(edges.filter(edge=>rootIds.has(edge.from)).map(edge=>edge.to));
   nodes.forEach(node=>{
     if(node.column===0)return;
+    if(node.kind==='operation'){node.column=2;return;}
     if(node.kind==='account'&&node.id.startsWith('refund:')){node.column=4;return;}
     const hasLater=edges.some(edge=>edge.from===node.id&&!edge.to.startsWith('refund:'));
     node.column=firstIds.has(node.id)?1:2;
@@ -89,13 +110,16 @@ function buildNetwork(ctx:ViewContext, groups:TxnGroup[], asOf:string, visibleGr
   });
   const columns=[0,1,2,3,4].map(column=>[...nodes.values()].filter(node=>node.column===column)
     .sort((a,b)=>a.kind.localeCompare(b.kind)||a.meta.localeCompare(b.meta)||a.title.localeCompare(b.title)));
-  columns.forEach((column,col)=>column.forEach((node,row)=>{node.x=COLUMN_X[col];node.y=28+row*160;}));
+  // 独立的资金池内操作没有跨池连线，单独排在主链路下方，避免卡片压住或穿过真实连线。
+  const flowRowCount=Math.max(1,...columns.map(column=>column.filter(node=>node.kind!=='operation').length));
+  columns.forEach((column,col)=>column.filter(node=>node.kind!=='operation').forEach((node,row)=>{node.x=COLUMN_X[col];node.y=28+row*160;}));
+  columns[2].filter(node=>node.kind==='operation').forEach((node,row)=>{node.x=COLUMN_X[2];node.y=28+(flowRowCount+row)*160;});
   // 支付根按其首个承接节点的纵向位置排列，减少扇出线交叉。
   columns[0].sort((a,b)=>{
     const targetY=(node:FlowNode)=>edges.filter(edge=>edge.from===node.id).map(edge=>nodes.get(edge.to)?.y??0).reduce((s,v)=>s+v,0)/Math.max(1,edges.filter(edge=>edge.from===node.id).length);
     return targetY(a)-targetY(b)||a.meta.localeCompare(b.meta);
   }).forEach((node,row)=>{node.y=28+row*160;});
-  return {nodes:[...nodes.values()],edges,omitted};
+  return {nodes:[...nodes.values()],edges,omitted,standalone};
 }
 
 function selection(edge:FlowEdge,nodes:Map<string,FlowNode>):PoolFlowSelection {
@@ -111,6 +135,9 @@ function renderNetwork(ctx:ViewContext, visibleGroups:TxnGroup[], asOf:string, c
   const currentEdges=network.edges.filter(edge=>edge.groupIds.has(currentGroupId));
   const currentEdge=currentEdges[0];
   const currentFrom=currentEdge?nodeMap.get(currentEdge.from):undefined; const currentTo=currentEdge?nodeMap.get(currentEdge.to):undefined;
+  const currentGroup=ctx.groups.find(group=>group.groupId===currentGroupId);
+  const currentLeg=currentGroup?.legs[0];
+  const currentPool=currentLeg?legDisplay(currentLeg,ctx.index):undefined;
   const edgeState=(edge:FlowEdge)=>{
     const visible=[...edge.groupIds].some(id=>visibleGroupIds.has(id));
     if(isFinal&&visible)return 'complete';
@@ -132,13 +159,22 @@ function renderNetwork(ctx:ViewContext, visibleGroups:TxnGroup[], asOf:string, c
     return `<g class="customer-template-edge ${edge.kind} ${state}" data-customer-flow='${escapeHtml(JSON.stringify(selection(edge,nodeMap)))}' role="button" tabindex="0"><path d="${d}" marker-end="url(#template-arrow-${edge.kind})"/><g class="customer-template-edge-label" transform="translate(${(sx+ex)/2} ${(sy+ey)/2-16})"><rect x="-46" y="-10" width="92" height="20" rx="3"/><text y="4" text-anchor="middle">¥${amount(edge.amount)}${edge.groupIds.size>1?` · ${edge.groupIds.size}次`:''}</text></g></g>`;
   }).join('');
   const activeNodeIds=new Set(visibleEdges.flatMap(edge=>[edge.from,edge.to]));
+  network.nodes.filter(node=>node.groupId&&visibleGroupIds.has(node.groupId)).forEach(node=>activeNodeIds.add(node.id));
   const currentNodeIds=new Set(currentEdges.flatMap(edge=>[edge.from,edge.to]));
+  network.nodes.filter(node=>node.groupId===currentGroupId).forEach(node=>currentNodeIds.add(node.id));
   const cards=network.nodes.map(node=>{
     const visible=activeNodeIds.has(node.id); const nodeState=!visible?'future':isFinal?'complete':currentNodeIds.has(node.id)?'current-focus':'history';
-    return `<foreignObject x="${node.x}" y="${node.y}" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"><article xmlns="http://www.w3.org/1999/xhtml" class="customer-template-node ${node.kind} ${nodeState}" ${currentNodeIds.has(node.id)?'data-current-node="true"':''} ${currentEdges.some(edge=>edge.from===node.id)?'data-current-source="true"':''} ${node.poolType?`data-customer-pool-type="${escapeHtml(node.poolType)}"`:''} ${node.groupId?`data-customer-group="${escapeHtml(node.groupId)}"`:''} role="button" tabindex="0"><div><span>${escapeHtml(node.eyebrow)}</span><small>${node.column===0?'起点':node.column===4?'退出':'承接'}</small></div><strong title="${escapeHtml(node.title)}">${escapeHtml(node.title)}</strong><b>${visible?escapeHtml(node.amountText):'尚未发生'}</b><small title="${escapeHtml(node.meta)}">${escapeHtml(node.meta)}</small></article></foreignObject>`;
+    const role=node.column===0?'起点':node.column===4?'退出':node.kind==='operation'?'内部操作':'承接';
+    return `<foreignObject x="${node.x}" y="${node.y}" width="${NODE_WIDTH}" height="${NODE_HEIGHT}"><article xmlns="http://www.w3.org/1999/xhtml" class="customer-template-node ${node.kind} ${nodeState}" ${currentNodeIds.has(node.id)?'data-current-node="true"':''} ${currentEdges.some(edge=>edge.from===node.id)?'data-current-source="true"':''} ${node.poolType?`data-customer-pool-type="${escapeHtml(node.poolType)}"`:''} ${node.groupId?`data-customer-group="${escapeHtml(node.groupId)}"`:''} role="button" tabindex="0"><div><span>${escapeHtml(node.eyebrow)}</span><small>${role}</small></div><strong title="${escapeHtml(node.title)}">${escapeHtml(node.title)}</strong><b>${visible?escapeHtml(node.amountText):'尚未发生'}</b><small title="${escapeHtml(node.meta)}">${escapeHtml(node.meta)}</small></article></foreignObject>`;
   }).join('');
   const defs=[['payment','#009261'],['allocate','#0052d9'],['refund','#ed7b2f'],['exit','#e81f52']].map(([kind,color])=>`<marker id="template-arrow-${kind}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L8 4 L0 8 Z" fill="${color}"/></marker>`).join('');
-  return `<div class="customer-template-toolbar"><div><span class="customer-template-status">${visibleGroups.filter(group=>group.outLegs.some(entry=>entry.accountType==='CUSTOMER')).length} 笔实际支付流水</span><span>${visibleEdges.length} / ${network.edges.length} 条资金流转关系</span></div><div class="customer-template-legend"><span><i class="current-line"></i>本次操作</span><span><i class="history-line"></i>已发生</span><span><i class="future-line"></i>尚未发生</span></div></div><div class="customer-template-answer current"><strong>本次资金变化</strong><div><span><b>${escapeHtml(currentFrom?.eyebrow??'来源待补充')}</b></span><i>→</i><span><b>${escapeHtml(currentTo?.eyebrow??'去向待补充')}</b></span><span class="amount">¥${amount(visibleGroups.at(-1)?.amount??0)}</span></div></div><div class="customer-template-network"><div class="customer-template-columns">${['资金进入','首次承接','内部流转','当前归属','退回客户'].map(name=>`<span>${name}</span>`).join('')}</div><svg viewBox="0 0 1244 ${height}" style="min-height:${height}px"><defs>${defs}</defs>${paths}${cards}</svg></div>${network.omitted?`<div class="customer-template-note">${network.omitted} 次操作缺少唯一配对关系，未在前端猜测连线，可到资金地图查看原始明细。</div>`:''}`;
+  const standaloneVisible=network.standalone;
+  const answer=currentEdge
+    ? `<span><b>${escapeHtml(currentFrom?.eyebrow??'来源待补充')}</b></span><i>→</i><span><b>${escapeHtml(currentTo?.eyebrow??'去向待补充')}</b></span>`
+    : currentGroup?.info.singleSided
+      ? `<span><b>${escapeHtml(currentPool?.name??'资金池')}</b></span><i>·</i><span><b>资金池内调整</b></span>`
+      : `<span><b>来源待补充</b></span><i>→</i><span><b>去向待补充</b></span>`;
+  return `<div class="customer-template-toolbar"><div><span class="customer-template-status">${visibleGroups.filter(group=>group.outLegs.some(entry=>entry.accountType==='CUSTOMER')).length} 笔实际支付流水</span><span>${visibleEdges.length} / ${network.edges.length} 条资金流转关系${standaloneVisible?` · ${standaloneVisible} 条资金池内操作`:''}</span></div><div class="customer-template-legend"><span><i class="current-line"></i>本次操作</span><span><i class="history-line"></i>已发生</span><span><i class="future-line"></i>尚未发生</span></div></div><div class="customer-template-answer current"><strong>本次资金变化</strong><div>${answer}<span class="amount">¥${amount(visibleGroups.at(-1)?.amount??0)}</span></div></div><div class="customer-template-network"><div class="customer-template-columns">${['资金进入','首次承接','内部流转','当前归属','退回客户'].map(name=>`<span>${name}</span>`).join('')}</div><svg viewBox="0 0 1244 ${height}" style="min-height:${height}px"><defs>${defs}</defs>${paths}${cards}</svg></div>${network.omitted?`<div class="customer-template-note">${network.omitted} 次操作缺少可确定的跨池配对，前端未猜测连线，可到资金地图查看原始明细。</div>`:''}`;
 }
 
 export function renderCustomerJourney(target:HTMLElement,ctx:ViewContext):void {
